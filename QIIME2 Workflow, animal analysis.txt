@@ -1,0 +1,201 @@
+# Accessing the server
+ssh root@10.19.139.143
+Biome191
+
+# Importing the data
+
+qiime tools import \
+  --type 'SampleData[SequencesWithQuality]' \
+  --input-path /mnt/datasets/project_2/tanzania/tanzania_manifest.txt \
+  --output-path demux.qza \
+  --input-format SingleEndFastqManifestPhred33V2
+
+qiime demux summarize \
+  --i-data demux.qza \
+  --o-visualization demux.qzv
+
+# DADA2 Sequence Quality Control
+
+qiime dada2 denoise-single \
+  --i-demultiplexed-seqs demux.qza \
+  --p-trim-left 0 \
+  --p-trunc-len 150 \
+  --o-representative-sequences rep-seqs_4.qza \
+  --o-table table_0_150.qza \
+  --o-denoising-stats stats-4.qza
+
+# Visualize DADA2 stats
+
+qiime metadata tabulate \
+  --m-input-file stats-4.qza \
+  --o-visualization stats-4.qzv
+
+qiime feature-table summarize \
+  --i-table table_0_150.qza\
+  --o-visualization table_0_150.qzv\
+  --m-sample-metadata-file /mnt/datasets/project_2/tanzania/tanzania_metadata.txt
+
+qiime feature-table tabulate-seqs \
+  --i-data rep-seqs_4.qza \
+  --o-visualization rep-seqs_4.qzv
+
+# Generate tree for phylogeny
+
+qiime phylogeny align-to-tree-mafft-fasttree \
+  --i-sequences rep-seqs_4.qza \
+  --o-alignment aligned-rep-seqs.karanvir.qza \
+  --o-masked-alignment masked-aligned-rep-seqs.karanvir.qza \
+  --o-tree unrooted-tree.karanvir.qza \
+  --o-rooted-tree rooted-tree.karanvir.qza
+
+# Filter metadata
+
+qiime feature-table filter-samples \
+--i-table table_0_150.qza \
+--m-metadata-file /mnt/datasets/project_2/tanzania/tanzania_metadata.txt \
+--p-where "[sample_type]='feces' AND [env_feature] IN (‘animal-associated habitat’, ‘human-associated habitat’)  \
+--o-filtered-table animal-human-filtered-table.qza
+
+# Import greengenes 99% database [Hans did this]
+
+Wget "ftp://greengenes.microbio.me/greengenes_release/gg_13_5/gg_13_8_otus.tar.gz"gunzip gg_13_8_otus.tar.gz
+tar -xvf gg_13_8_otus.tar
+
+qiime tools import \
+--type 'FeatureData[Sequence]' \
+--input-path gg_13_8_otus/rep_set/99_otus.fasta \
+--output-path ref-otus.qza
+
+qiime tools import \
+--type 'FeatureData[Taxonomy]' \
+--input-format HeaderlessTSVTaxonomyFormat \
+--input-path gg_13_8_otus/taxonomy/99_otu_taxonomy.txt \
+--output-path ref-taxonomy.qza
+
+# Get study specific reads from the datababase
+
+qiime feature-classifier extract-reads \
+--i-sequences ref-otus.qza \
+--p-f-primer GTGCCAGCMGCCGCGGTAA \
+--p-r-primer GGACTACHVGGGTWTCTAAT \
+--p-trunc-len 150 \
+--o-reads ref-seqs.qza
+
+# Train classifier
+
+qiime feature-classifier fit-classifier-naive-bayes \
+--i-reference-reads ref-seqs.qza \
+--i-reference-taxonomy ref-taxonomy.qza \
+--o-classifier classifier.qza
+
+# Generate taxonomy.qza and .qzv
+
+qiime feature-classifier classify-sklearn \
+--i-classifier classifier.qza \
+--i-reads rep-seqs-4.qza \
+--o-classification taxonomy.qza
+
+qiime metadata tabulate \
+--m-input-file taxonomy.qza \
+--o-visualization taxonomy.qzv
+
+# ASV specific filtering of: (1) mitochondrial DNA (2) chloroplasts (3) low-freq ASVs
+
+qiime taxa filter-table \ 
+  --i-table animal-human-filtered-table.qza \
+  --i-taxonomy taxonomy.qza \ 
+  --p-exclude mitochondria \
+  --o-filtered-table filtered-mitochondria-table.qza 
+
+qiime taxa filter-table \ 
+  --i-table filtered-mitochondria-table.qza \ 
+  --i-taxonomy taxonomy.qza \
+  --p-exclude chloroplasts \ 
+  --o-filtered-table filtered-mitochondria-chloroplast-table.qza 
+
+#Remove low-frequency ASVs 
+qiime feature-table filter-features \ 
+  --i-table filtered-mitochondria-chloroplast-table.qza \ 
+  --p-min-frequency 10 \
+  --o-filtered-table filtered-table-final.qza
+
+# Generate table.qzv
+
+qiime feature-table summarize \
+  --i-table filtered-table-final.qza\
+  --o-visualization filtered-table-final.qzv\
+  --m-sample-metadata-file /mnt/datasets/project_2/tanzania/tanzania_metadata.txt
+
+# Alpha rarefaction using the filtered table
+
+qiime diversity alpha-rarefaction \
+  --i-table filtered-table-final.qza \
+  --i-phylogeny rooted-tree.qza \
+  --p-max-depth <20000>\
+  --m-metadata-file /mnt/datasets/project_2/tanzania/tanzania_metadata.txt\
+  --o-visualization alpha-rarefaction.qzv
+
+# Generating alpha and beta diversity metrics using sampling depth of 10435
+
+qiime diversity core-metrics-phylogenetic \
+  --i-phylogeny rooted-tree.qza \
+  --i-table filtered-table-final.qza \
+  --p-sampling-depth <10435>\
+  --m-metadata-file /mnt/datasets/project_2/tanzania/tanzania_metadata.txt \
+  --output-dir core-metrics-results
+
+# Whisker-box plots using (1) Bray-Curtis (2) unweighted uniFrac distances (3) weighted uniFrac distances
+
+qiime diversity beta-group-significance \
+  --i-distance-matrix core-metrics-results/bray_curtis_distance_matrix.qza \
+ --m-metadata-file/mnt/datasets/project_2/tanzania/tanzania_metadata.txt \
+  --m-metadata-column host_common_name \
+  --o-visualization core-metrics-results/bray_curtis-group-significance.qzv \
+  --p-pairwise
+
+qiime diversity beta-group-significance \
+  --i-distance-matrix core-metrics-results/unweighted_unifrac_distance_matrix.qza \
+  --m-metadata-file /mnt/datasets/project_2/tanzania/tanzania_metadata.txt \
+  --m-metadata-column host_common_name \
+  --o-visualization core-metrics-results/unweighted-unifrac-group-significance.qzv \
+  --p-pairwise
+
+qiime diversity beta-group-significance \
+  --i-distance-matrix core-metrics-results/weighted_unifrac_distance_matrix.qza \
+  --m-metadata-file /mnt/datasets/project_2/tanzania/tanzania_metadata.txt \
+  --m-metadata-column host_common_name \
+  --o-visualization core-metrics-results/weighted-unifrac-group-significance.qzv \
+  --p-pairwise
+ 
+# Making stacked taxonomy bar plots
+
+qiime taxa barplot \
+--i-table filtered-table-final.qza\
+--i-taxonomy taxonomy.qza \
+--m-metadata-file /mnt/datasets/project_2/tanzania/tanzania_metadata.txt \
+--o-visualization taxa-bar-plots.qzv
+
+#Exporting files for R
+
+qiime tools export \
+--input-path filtered-table-final.qza \
+--output-path exported
+
+qiime tools export \
+--input-path taxonomy.qza \
+--output-path exported
+
+qiime tools export \
+--input-path rooted-tree.karanvir.qza \
+--output-path exported
+
+biom add-metadata \
+-i exported/feature-table.biom \
+-o exported/table-with-taxonomy.biom \
+--observation-metadata-fp exported/taxonomy.tsv \
+--sc-separated taxonomy
+
+
+
+
+

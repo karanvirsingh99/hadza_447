@@ -1,0 +1,339 @@
+##########QIIME Scripts#################################################
+
+
+##########Script 1##########
+#Filter for sequences of interest using metadata. Filter based on sample_type and host_common_name metadata categories to include human fecal samples only
+qiime feature-table filter-samples \
+ --i-table /root/DATA/table_0_150.qza \
+ --m-metadata-file /mnt/datasets/project_2/tanzania/tanzania_metadata.txt \
+ --p-where " [sample_type] = 'feces' AND [host_common_name] = 'human' " \
+ --o-filtered-table human-fecal-anna-filtered-table.qza
+#Visualize filtered table
+qiime feature-table summarize \
+ --i-table human-fecal-anna-filtered-table.qza \
+ --o-visualization human-fecal-anna-filtered-table.qzv \
+ --m-sample-metadata-file /mnt/datasets/project_2/tanzania/tanzania_metadata.txt
+
+	
+
+##########Script 2###########
+#Generate a tree for phylogenetic analysis downstream
+qiime phylogeny align-to-tree-mafft-fasttree \
+ --i-sequences /root/DATA/rep-seqs_4.qza \
+ --o-alignment anna-aligned-rep-seqs.qza \
+ --o-masked-alignment masked-aligned-rep-seqs.qza \
+ --o-tree unrooted-tree.qza \
+ --o-rooted-tree rooted-tree.qza 
+	
+
+##########Script 3##########
+#Taxonomic analysis was the same for all group members, so the taxonomy.qza file from the hans folder### will be used by all
+#Perform ASV-based filtering
+#Remove ASVs that belong to mitochondria
+qiime taxa filter-table \
+ --i-table human-fecal-anna-filtered-table.qza \
+ --i-taxonomy /root/DATA/hans/taxonomy.qza \
+ --p-exclude mitochondria \
+ --o-filtered-table filtered-mitochondria-table.qza 
+#Remove ASVs that belong to chloroplasts 
+qiime taxa filter-table \
+ --i-table filtered-mitochondria-table.qza \
+ --i-taxonomy /root/DATA/hans/taxonomy.qza \
+ --p-exclude chloroplasts \
+ --o-filtered-table filtered-mitochondria-chloroplast-table.qza 
+#Remove low-frequency ASVs
+qiime feature-table filter-features \
+ --i-table filtered-mitochondria-chloroplast-table.qza \
+ --p-min-frequency 10 \
+ --o-filtered-table anna-filtered-table-final.qza 
+	
+
+##########Script 4##########
+#As a team we decided to filter out samples of individuals aged less than three years old, same as the original authors
+#Filter final filtered table based on host_life_stage  to include only adult and child samples, excluding infant and not collected
+qiime feature-table filter-samples \
+ --i-table anna-filtered-table-final.qza \
+ --m-metadata-file /mnt/datasets/project_2/tanzania/tanzania_metadata.txt \
+ --p-where "[host_life_stage] IN ('adult', 'child')" \
+ --o-filtered-table age-filtered-table.qza
+	
+
+###########Script 5##########
+#Visualize the final filtered table and the alpha rarefaction plot in order to choose sampling depth for final filtered dataset
+#Visualize the final filtered table
+qiime feature-table summarize \
+ --i-table age-filtered-table.qza \
+ --o-visualization age-filtered-table.qzv \
+ --m-sample-metadata-file /mnt/datasets/project_2/tanzania/tanzania_metadata.txt
+#Visualize the rarefaction plot
+qiime diversity alpha-rarefaction \
+ --i-table age-filtered-table.qza \
+ --i-phylogeny rooted-tree.qza \
+ --p-max-depth 20000 \
+ --m-metadata-file /mnt/datasets/project_2/tanzania/tanzania_metadata.txt \
+ --o-visualization alpha-rarefaction.qzv
+	
+
+
+
+##########Script 6##########
+#Export data from QIIME for analysis in R
+#Export key files to exported directory (exported)
+#Export the final filtered dataset
+qiime tools export \
+ --input-path age-filtered-table.qza \
+ --output-path exported 
+#Export the taxonomy file
+qiime tools export \
+ --input-path /root/DATA/hans/taxonomy.qza \
+ --output-path exported
+#Export the rooted tree
+qiime tools export \
+ --input-path rooted-tree.qza \
+ --output-path exported
+#Edit the column names 
+#Open the file in a text editor on the server called nano
+nano exported/taxonomy.tsv
+#Combine taxonomy with BIOM data
+biom add-metadata \
+ -i exported/feature-table.biom \
+ -o exported/table-with-taxonomy-1.biom \
+ --observation-metadata-fp exported/taxonomy.tsv \
+ --sc-separated taxonomy 
+#Secure copy these three files to R project folder on home computer
+	
+
+
+
+##########Script 7##########
+#Filter age filtered data to include only the three bush camps of interest
+qiime feature-table filter-samples \
+ --i-table age-filtered-table.qza \
+ --m-metadata-file \
+ --p-where "[bush_camp] IN ('HUKAMAKO', 'SENGELI', 'KIPAMBA')" \
+ --o-filtered-table 3-bush-camps-filtered-table.qza
+#Filter age filtered data for three bush camps to exclude stream and not collected water samples
+qiime feature-table filter-samples \
+ --i-table 3-bush-camps-filtered-table.qza \
+ --m-metadata-file /mnt/datasets/project_2/tanzania/tanzania_metadata.txt \
+ --p-where "[water_source] IN ('SPRING', 'WELL')" \
+ --o-filtered-table 3-bush-camps-filtered-final.qza
+	
+
+###########Script 8############
+#Export data from QIIME for analysis in R
+#Export key files to exported directory (exported)
+#Export the final filtered dataset
+qiime tools export \
+ --input-path 3-bush-camps-filtered-final.qza \
+ --output-path exported 
+#Export the taxonomy file
+qiime tools export \
+ --input-path /root/DATA/hans/taxonomy.qza \
+ --output-path exported
+#Export the rooted tree
+qiime tools export \
+ --input-path rooted-tree.qza \
+ --output-path exported
+#Edit the column names 
+#Open the file in a text editor on the server called nano
+nano exported/taxonomy.tsv
+#Combine taxonomy with BIOM data
+biom add-metadata \
+ -i exported/feature-table.biom \
+ -o exported/table-with-taxonomy-2.biom \
+ --observation-metadata-fp exported/taxonomy.tsv \
+ --sc-separated taxonomy 
+#Secure copy these three files to R project folder on home computer
+
+########################################################################
+
+##########R Scripts#####################################################
+
+
+##########Script 1##########
+#Generate PCoA plotted on Bray-Curtis, unweighted UniFrac,
+#weighted UniFrac for for final filtered dataset that includes 
+#all bush camps. 
+
+# Loading packages
+library(tidyverse)
+library(vegan)
+library(phyloseq)
+library(DESeq2)
+library(ape)
+
+#Importing all data files previously exported from QIIME
+biom_file_1 <- import_biom("table-with-taxonomy-1.biom")
+metadata <- import_qiime_sample_data("tanzania_metadata.txt")
+tree <- read_tree_greengenes("tree.nwk")
+
+#Convert Qiime's multichotomous tree into a dichotomous one
+tree <- multi2di(tree)
+
+#Combine all objects into phyloseq object
+physeq <- merge_phyloseq(biom_file_1, metadata, tree)
+
+#Set set of random numbers
+set.seed(711)
+
+#Look at taxonomic rank names
+rank_names(physeq)
+
+#Rename column names for taxonomic ranks
+colnames(tax_table(physeq)) <- c("Kingdom", "Phylum", "Class",
+                                 "Order", "Family", "Genus",
+                                 "Species")
+#Create table rarified to 11000
+physeq_rar <- rarefy_even_depth(physeq, sample.size = 11000)
+
+#Convert to relative abundance
+physeq_rar_RA <- transform_sample_counts(physeq_rar, function(x) x/sum(x))
+
+#Bray-curtis 
+ord <- ordinate(physeq_rar_RA, method = "PCoA",
+                distance = "bray")
+#Plot data
+plot_ordination(physeq_rar_RA,
+                ord,
+                type = "sample",
+                color = "bush_camp",
+                title = "",) +
+  geom_point(size = 3)+
+  guides(colour = guide_legend("BUSH CAMP"))+
+  theme_bw(base_size = 14)
+
+#Save the plot
+ggsave("PCoA_bray_age_allcamps.pdf", width=10, height=8)
+
+#Unweighted UniFrac
+ord1 <- ordinate(physeq_rar_RA, method = "PCoA",
+                 distance = "unifrac")
+# Plot data
+plot_ordination(physeq_rar_RA,
+                ord1,
+                type = "sample",
+                color = "bush_camp",
+                title = "",) +
+  geom_point(size = 3)+
+  guides(colour = guide_legend("BUSH CAMP"))+
+  theme_bw(base_size = 14)
+
+#Save the plot
+ggsave("PCoA_unifrac_age_allcamps.pdf", width=10, height=8)
+
+#Weighted UniFrac
+ord2 <- ordinate(physeq_rar_RA, method = "PCoA",
+                 distance = "wunifrac")
+# Plot data
+plot_ordination(physeq_rar_RA,
+                ord2,
+                type = "sample",
+                color = "bush_camp",
+                title = "",) +
+  geom_point(size = 3)+
+  guides(colour = guide_legend("BUSH CAMP"))+
+  theme_bw(base_size = 14)
+
+#Save the plot
+ggsave("PCoA_wunifrac_age_allcamps.pdf", width=10, height=8)
+
+#############################################################
+###########Script 2##########
+# Loading packages
+library(tidyverse)
+library(vegan)
+library(phyloseq)
+library(DESeq2)
+library(ape)
+
+# Importing all data files
+biom_file_2 <- import_biom("table-with-taxonomy-2.biom")
+metadata <- import_qiime_sample_data("tanzania_metadata.txt")
+tree <- read_tree_greengenes("tree.nwk")
+
+#Convert Qiime's multichotomous tree into a dichotomous one
+tree <- multi2di(tree)
+
+#Combine all objects into phyloseq object
+physeq <- merge_phyloseq(biom_file_2, metadata, tree)
+
+
+#Set set of random numbers
+set.seed(711)
+
+#Look at taxonomic rank names
+rank_names(physeq)
+
+#Rename column names for taxonomic ranks
+colnames(tax_table(physeq)) <- c("Kingdom", "Phylum", "Class",
+                                 "Order", "Family", "Genus",
+                                 "Species")
+#Create table rarified to 11000
+physeq_rar <- rarefy_even_depth(physeq, sample.size = 11000)
+
+#Convert to relative abundance
+physeq_rar_RA <- transform_sample_counts(physeq_rar, function(x) x/sum(x))
+
+
+#Bray-curtis 
+ord3 <- ordinate(physeq_rar_RA, method = "PCoA",
+                 distance = "bray")
+
+# Plot data
+plot_ordination(physeq_rar_RA,
+                ord3,
+                type = "sample",
+                color = "bush_camp",
+                shape = "water_source",
+                title = "") +
+  geom_point(size = 2) +
+  stat_ellipse(type = "norm", size = 1) + 
+  guides(colour = guide_legend("BUSH CAMP")) + 
+  guides(shape = guide_legend("WATER SOURCE"))+
+  theme_bw(base_size = 14)
+
+#Save the plot
+ggsave("PCoA_Bray_final.pdf", width = 10, height = 8)
+
+
+
+#Unweighted-unifrac
+ord4 <- ordinate(physeq_rar_RA, method = "PCoA",
+                 distance = "unifrac")
+
+#Plot data
+plot_ordination(physeq_rar_RA,
+                ord4,
+                type = "sample",
+                color = "bush_camp",
+                shape = "water_source",
+                title = "") +
+  geom_point(size = 2)+
+  stat_ellipse(type = "norm", size = 1) + 
+  guides(colour = guide_legend("BUSH CAMP")) + 
+  guides(shape = guide_legend("WATER SOURCE"))+
+  theme_bw(base_size = 14)
+
+#Save the plot
+ggsave("PCoA_unweighted_final.pdf", width =10, height =8)
+
+
+#Weighted-unifrac
+ord5 <- ordinate(physeq_rar_RA, method = "PCoA",
+                 distance = "wunifrac")
+#Plot data
+plot_ordination(physeq_rar_RA,
+                ord5,
+                type = "sample",
+                color = "bush_camp",
+                shape = "water_source",
+                title = "") +
+  geom_point(size = 2)+
+  stat_ellipse(type = "norm", size = 1) + 
+  guides(colour = guide_legend("BUSH CAMP")) + 
+  guides(shape = guide_legend("WATER SOURCE"))+
+  theme_bw(base_size = 14)
+
+#Save the plot
+ggsave("PCoA_weighted_final.pdf", width =10, height =8)
