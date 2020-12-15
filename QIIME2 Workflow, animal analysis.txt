@@ -1,7 +1,3 @@
-# Accessing the server
-ssh root@10.19.139.143
-Biome191
-
 # Importing the data
 
 qiime tools import \
