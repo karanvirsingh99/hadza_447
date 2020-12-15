@@ -1,0 +1,71 @@
+#!/bin/bash
+
+#Import sequence data from the server directory and generate demux.qza
+#Note: Sequences are already demultiplexed
+qiime tools import \
+  --type 'SampleData[SequencesWithQuality]' \
+  --input-path /mnt/datasets/project_2/tanzania/tanzania_manifest.txt \
+  --output-path /root/DATA/demux.qza \
+  --input-format SingleEndFastqManifestPhred33V2
+
+#Generate summary of demultiplexing results
+qiime demux summarize \
+  --i-data /root/DATA/demux.qza \
+  --o-visualization /root/DATA/demux.qzv
+
+#Run DADA2 sequence quality control
+qiime dada2 denoise-single \
+  --i-demultiplexed-seqs /root/DATA/demux.qza \
+  --p-trim-left 15 \
+  --p-trunc-len 220 \
+  --o-representative-sequences /root/DATA/rep-seqs.qza \
+  --o-table /root/DATA/table.qza \
+  --o-denoising-stats /root/DATA/stats.qza
+  
+  qiime dada2 denoise-single \
+  --i-demultiplexed-seqs /root/DATA/demux.qza \
+  --p-trim-left 0 \
+  --p-trunc-len 230 \
+  --o-representative-sequences /root/DATA/rep-seqs_2.qza \
+  --o-table /root/DATA/table_0_230.qza \
+  --o-denoising-stats /root/DATA/stats_2.qza
+  
+  qiime dada2 denoise-single \
+  --i-demultiplexed-seqs /root/DATA/demux.qza \
+  --p-trim-left 0 \
+  --p-trunc-len 250 \
+  --o-representative-sequences /root/DATA/rep-seqs_3.qza \
+  --o-table /root/DATA/table_0_250.qza \
+  --o-denoising-stats /root/DATA/stats_4.qza
+
+qiime dada2 denoise-single \
+  --i-demultiplexed-seqs /root/DATA/demux.qza \
+  --p-trim-left 0 \
+  --p-trunc-len 150 \
+  --o-representative-sequences /root/DATA/rep-seqs_4.qza \
+  --o-table /root/DATA/table_0_150.qza \
+  --o-denoising-stats /root/DATA/stats_4.qza
+
+#Repeat this command for all the table.qza files generate so far. Change input file and output name to avoid overwriting output.
+qiime feature-table summarize \
+  --i-table table_2.qza \
+  --o-visualization table.qzv \
+  --m-sample-metadata-file /mnt/datasets/project_2/tanzania/tanzania_metadata.txt
+
+qiime feature-table tabulate-seqs \
+  --i-data rep-seqs.qza \
+  --o-visualization rep-seqs.qzv
+
+#View denoising stats (about denoising process)
+qiime metadata tabulate \
+  --m-input-file stats.qza \
+  --o-visualization denoising-stats.qzv
+  
+#Repeat DADA2 sequence quality control using different truncation parameters
+qiime dada2 denoise-single \
+  --i-demultiplexed-seqs /root/DATA/demux.qza \
+  --p-trim-left 0 \
+  --p-trunc-len 230 \
+  --o-representative-sequences /root/DATA/rep-seqs_2.qza \
+  --o-table /root/DATA/table_2.qza \
+  --o-denoising-stats /root/DATA/stats_2.qza
